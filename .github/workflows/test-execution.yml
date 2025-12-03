@@ -1,0 +1,80 @@
+# 📋 Copy This Workflow to Your GitHub Repo
+
+name: Agentic QE - Test Execution
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_ids:
+        description: 'Comma-separated test case IDs'
+        required: true
+        type: string
+      framework:
+        description: 'Test framework (playwright, cypress, selenium)'
+        required: true
+        default: 'playwright'
+        type: choice
+        options:
+          - playwright
+          - cypress
+          - selenium
+      triggered_by:
+        description: 'Who triggered this execution'
+        required: false
+        default: 'manual'
+        type: string
+
+jobs:
+  execute-tests:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Install Playwright browsers
+        if: inputs.framework == 'playwright'
+        run: npx playwright install --with-deps
+      
+      - name: Parse test IDs
+        id: parse_tests
+        run: |
+          echo "Test IDs: ${{ inputs.test_ids }}"
+          IFS=',' read -ra TEST_ARRAY <<< "${{ inputs.test_ids }}"
+          echo "test_count=${#TEST_ARRAY[@]}" >> $GITHUB_OUTPUT
+      
+      - name: Run Playwright tests
+        if: inputs.framework == 'playwright'
+        run: |
+          echo "Running Playwright tests: ${{ inputs.test_ids }}"
+          IFS=',' read -ra TEST_IDS <<< "${{ inputs.test_ids }}"
+          for test_id in "${TEST_IDS[@]}"; do
+            echo "Executing test: $test_id"
+            TEST_FILE=$(find . -name "*${test_id}*.spec.ts" -o -name "*${test_id}*.spec.js" | head -1)
+            if [ -n "$TEST_FILE" ]; then
+              echo "Found test file: $TEST_FILE"
+              npx playwright test "$TEST_FILE" || echo "Test failed: $test_id"
+            else
+              echo "Test file not found for: $test_id"
+            fi
+          done
+      
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 30
+ 
