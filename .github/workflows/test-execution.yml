@@ -49,24 +49,11 @@ jobs:
         id: parse_tests
         run: |
           echo "Test IDs: ${{ inputs.test_ids }}"
-          IFS=',' read -ra TEST_ARRAY <<< "${{ inputs.test_ids }}"
-          echo "test_count=${#TEST_ARRAY[@]}" >> $GITHUB_OUTPUT
       
       - name: Run Playwright tests
         if: inputs.framework == 'playwright'
-        run: |
-          echo "Running Playwright tests: ${{ inputs.test_ids }}"
-          IFS=',' read -ra TEST_IDS <<< "${{ inputs.test_ids }}"
-          for test_id in "${TEST_IDS[@]}"; do
-            echo "Executing test: $test_id"
-            TEST_FILE=$(find . -name "*${test_id}*.spec.ts" -o -name "*${test_id}*.spec.js" | head -1)
-            if [ -n "$TEST_FILE" ]; then
-              echo "Found test file: $TEST_FILE"
-              npx playwright test "$TEST_FILE" || echo "Test failed: $test_id"
-            else
-              echo "Test file not found for: $test_id"
-            fi
-          done
+        run: npx playwright test
+           
       
       - name: Upload test results
         if: always()
