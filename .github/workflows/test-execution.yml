@@ -38,6 +38,9 @@ jobs:
           node-version: '18'
           cache: 'npm'
 
+      - name: Get Current Directory
+        run: cd
+        
       - name: Get NPM Config
         run: npm config list
       
