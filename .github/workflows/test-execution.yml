@@ -28,97 +28,135 @@ jobs:
           cache: 'npm'
       
       - name: Verify Node.js and npm
-        shell: bash
+        shell: pwsh
         run: |
-          echo "Node version: $(node --version)"
-          echo "npm version: $(npm --version)"
-          echo "Current directory: $(pwd)"
-          echo "Checking for lock files..."
-          ls -la | grep -E "(package-lock|yarn.lock|pnpm-lock)" || echo "No lock files found"
+          Write-Host "Node version: $(node --version)"
+          Write-Host "npm version: $(npm --version)"
+          Write-Host "Current directory: $(Get-Location)"
+          Write-Host "Checking for lock files..."
+          $lockFiles = Get-ChildItem -Filter "package-lock.json","yarn.lock","pnpm-lock.yaml" -ErrorAction SilentlyContinue
+          if ($lockFiles) {
+            Write-Host "Found lock files: $($lockFiles.Name -join ', ')"
+          } else {
+            Write-Host "No lock files found"
+          }
       
       - name: Install dependencies
-        shell: bash
+        shell: pwsh
         run: |
           # Clear npm cache if there are issues
-          echo "Clearing npm cache..."
-          npm cache clean --force || true
+          Write-Host "Clearing npm cache..."
+          npm cache clean --force
           
           # Check if package-lock.json exists, otherwise use npm install
-          if [ -f "package-lock.json" ]; then
-            echo "Found package-lock.json, using npm ci with legacy peer deps"
-            npm ci --legacy-peer-deps || {
-              echo "npm ci failed, trying npm install..."
+          if (Test-Path "package-lock.json") {
+            Write-Host "Found package-lock.json, using npm ci with legacy peer deps"
+            try {
+              npm ci --legacy-peer-deps
+            } catch {
+              Write-Host "npm ci failed, trying npm install..."
               npm install --legacy-peer-deps
             }
-          else
-            echo "No package-lock.json found, using npm install with legacy peer deps"
+          } else {
+            Write-Host "No package-lock.json found, using npm install with legacy peer deps"
             npm install --legacy-peer-deps
-          fi
+          }
           
-          echo "Dependencies installed successfully"
-          npm list --depth=0 || echo "Warning: Some dependencies may have peer dependency issues"
+          Write-Host "Dependencies installed successfully"
+          try {
+            npm list --depth=0
+          } catch {
+            Write-Host "Warning: Some dependencies may have peer dependency issues"
+          }
       
       - name: Install Playwright
-        shell: bash
+        shell: pwsh
         run: |
           # Install Playwright if not already in package.json
-          if ! npm list @playwright/test >/dev/null 2>&1; then
-            echo "Installing Playwright..."
+          $playwrightInstalled = npm list @playwright/test 2>$null
+          if (-not $playwrightInstalled) {
+            Write-Host "Installing Playwright..."
             npm install --save-dev @playwright/test --legacy-peer-deps
-          else
-            echo "Playwright already installed"
-          fi
+          } else {
+            Write-Host "Playwright already installed"
+          }
           # Install TypeScript support for Playwright config (required for .ts config files)
-          if ! npm list typescript >/dev/null 2>&1; then
-            echo "Installing TypeScript for Playwright config..."
+          $tsInstalled = npm list typescript 2>$null
+          if (-not $tsInstalled) {
+            Write-Host "Installing TypeScript for Playwright config..."
             npm install --save-dev typescript @types/node --legacy-peer-deps
-          fi
+          }
           # Install ts-node or @swc/core for TypeScript config compilation
-          if ! npm list ts-node >/dev/null 2>&1 && ! npm list @swc/core >/dev/null 2>&1; then
-            echo "Installing ts-node for TypeScript config support..."
-            npm install --save-dev ts-node --legacy-peer-deps || npm install --save-dev @swc/core @swc/helpers --legacy-peer-deps || echo "Warning: TypeScript runtime install failed, but continuing..."
-          fi
+          $tsNodeInstalled = npm list ts-node 2>$null
+          $swcInstalled = npm list @swc/core 2>$null
+          if (-not $tsNodeInstalled -and -not $swcInstalled) {
+            Write-Host "Installing ts-node for TypeScript config support..."
+            try {
+              npm install --save-dev ts-node --legacy-peer-deps
+            } catch {
+              try {
+                npm install --save-dev @swc/core @swc/helpers --legacy-peer-deps
+              } catch {
+                Write-Host "Warning: TypeScript runtime install failed, but continuing..."
+              }
+            }
+          }
           # Install Playwright browsers
-          echo "Installing Playwright browsers..."
-          npx playwright install --with-deps || echo "Warning: Browser installation had issues"
+          Write-Host "Installing Playwright browsers..."
+          try {
+            npx playwright install --with-deps
+          } catch {
+            Write-Host "Warning: Browser installation had issues"
+          }
       
       - name: Parse test IDs
         id: parse_tests
-        shell: bash
+        shell: pwsh
         run: |
-          echo "Test IDs: ${{ inputs.test_ids }}"
+          Write-Host "Test IDs: ${{ inputs.test_ids }}"
           # Convert comma-separated IDs to array
-          IFS=',' read -ra TEST_ARRAY <<< "${{ inputs.test_ids }}"
-          echo "test_count=${#TEST_ARRAY[@]}" >> $GITHUB_OUTPUT
+          $testArray = "${{ inputs.test_ids }}".Split(',')
+          $testCount = $testArray.Count
+          "test_count=$testCount" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
       
       - name: Run Playwright tests
-        shell: bash
+        shell: pwsh
         run: |
-          echo "Running Playwright tests: ${{ inputs.test_ids }}"
+          Write-Host "Running Playwright tests: ${{ inputs.test_ids }}"
           
           # Check if Playwright is installed
-          if ! command -v npx &> /dev/null || ! npx playwright --version &> /dev/null; then
-            echo "❌ Playwright is not installed. Installing now..."
+          $npxCheck = Get-Command npx -ErrorAction SilentlyContinue
+          $playwrightCheck = npx playwright --version 2>$null
+          if (-not $npxCheck -or -not $playwrightCheck) {
+            Write-Host "❌ Playwright is not installed. Installing now..."
             npm install --save-dev @playwright/test --legacy-peer-deps
             npx playwright install --with-deps
-          fi
+          }
           
           # Create Playwright config if it doesn't exist (TypeScript format)
-          if [ ! -f "playwright.config.ts" ] && [ ! -f "playwright.config.js" ] && [ ! -f "playwright.config.mjs" ]; then
-            echo "Creating basic Playwright config (TypeScript format)..."
+          $configExists = (Test-Path "playwright.config.ts") -or (Test-Path "playwright.config.js") -or (Test-Path "playwright.config.mjs")
+          if (-not $configExists) {
+            Write-Host "Creating basic Playwright config (TypeScript format)..."
             
             # Ensure TypeScript and ts-node are installed for TypeScript config support
-            if ! npm list typescript >/dev/null 2>&1; then
-              echo "Installing TypeScript..."
+            $tsInstalled = npm list typescript 2>$null
+            if (-not $tsInstalled) {
+              Write-Host "Installing TypeScript..."
               npm install --save-dev typescript @types/node --legacy-peer-deps
-            fi
+            }
             
-            if ! npm list @swc/core >/dev/null 2>&1 && ! npm list ts-node >/dev/null 2>&1; then
-              echo "Installing ts-node for TypeScript config compilation..."
-              npm install --save-dev ts-node --legacy-peer-deps || npm install --save-dev @swc/core @swc/helpers --legacy-peer-deps
-            fi
+            $tsNodeInstalled = npm list ts-node 2>$null
+            $swcInstalled = npm list @swc/core 2>$null
+            if (-not $tsNodeInstalled -and -not $swcInstalled) {
+              Write-Host "Installing ts-node for TypeScript config compilation..."
+              try {
+                npm install --save-dev ts-node --legacy-peer-deps
+              } catch {
+                npm install --save-dev @swc/core @swc/helpers --legacy-peer-deps
+              }
+            }
             
-            cat > playwright.config.ts << 'EOF'
+            $configContent = @"
           import { defineConfig, devices } from '@playwright/test';
 
           /**
@@ -169,36 +207,44 @@ jobs:
               // },
             ],
           });
-          EOF
-            echo "✅ Created playwright.config.ts (TypeScript format)"
-          fi
+          "@
+            Set-Content -Path "playwright.config.ts" -Value $configContent
+            Write-Host "✅ Created playwright.config.ts (TypeScript format)"
+          }
           
-          IFS=',' read -ra TEST_IDS <<< "${{ inputs.test_ids }}"
-          EXIT_CODE=0
-          TESTS_FOUND=0
+          $testIds = "${{ inputs.test_ids }}".Split(',')
+          $exitCode = 0
+          $testsFound = 0
           
-          for test_id in "${TEST_IDS[@]}"; do
-            echo "Executing test: $test_id"
+          foreach ($testId in $testIds) {
+            $testId = $testId.Trim()
+            Write-Host "Executing test: $testId"
             # Find and run the test file
             # Assumes test files are named like: tests/XSP-16-TC01.spec.ts
-            TEST_FILE=$(find tests -name "*${test_id}*.spec.ts" -o -name "*${test_id}*.spec.js" -o -name "*${test_id}*.spec.mjs" 2>/dev/null | head -1)
-            if [ -n "$TEST_FILE" ]; then
-              echo "Found test file: $TEST_FILE"
-              TESTS_FOUND=$((TESTS_FOUND + 1))
+            $testFile = Get-ChildItem -Path "tests" -Recurse -Filter "*$testId*.spec.ts","*$testId*.spec.js","*$testId*.spec.mjs" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($testFile) {
+              Write-Host "Found test file: $($testFile.FullName)"
+              $testsFound++
               # Run Playwright test - Playwright handles ES modules internally for test files
-              npx playwright test "$TEST_FILE" || EXIT_CODE=$?
-            else
-              echo "⚠️ Test file not found for: $test_id"
-              EXIT_CODE=1
-            fi
-          done
+              try {
+                npx playwright test $testFile.FullName
+                if ($LASTEXITCODE -ne 0) { $exitCode = $LASTEXITCODE }
+              } catch {
+                Write-Host "Test execution failed: $_"
+                $exitCode = 1
+              }
+            } else {
+              Write-Host "⚠️ Test file not found for: $testId"
+              $exitCode = 1
+            }
+          }
           
-          if [ $TESTS_FOUND -eq 0 ]; then
-            echo "⚠️ No test files found. Make sure your test files are in the 'tests' directory and named like: tests/XSP-16-TC01.spec.ts"
+          if ($testsFound -eq 0) {
+            Write-Host "⚠️ No test files found. Make sure your test files are in the 'tests' directory and named like: tests/XSP-16-TC01.spec.ts"
             exit 1
-          fi
+          }
           
-          exit $EXIT_CODE
+          exit $exitCode
       
       - name: Upload test results
         if: always()
@@ -213,10 +259,10 @@ jobs:
       
       - name: Publish test report
         if: always()
-        shell: bash
+        shell: pwsh
         run: |
-          echo "Test execution completed"
-          echo "Framework: Playwright"
-          echo "Test IDs: ${{ inputs.test_ids }}"
-          echo "Triggered by: ${{ inputs.triggered_by }}"
+          Write-Host "Test execution completed"
+          Write-Host "Framework: Playwright"
+          Write-Host "Test IDs: ${{ inputs.test_ids }}"
+          Write-Host "Triggered by: ${{ inputs.triggered_by }}"
 
