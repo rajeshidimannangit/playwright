@@ -1,3 +1,5 @@
+# 📋 Copy This Workflow to Your GitHub Repo
+
 name: Agentic QE - Test Execution
 
 on:
@@ -7,6 +9,15 @@ on:
         description: 'Comma-separated test case IDs'
         required: true
         type: string
+      framework:
+        description: 'Test framework (playwright, cypress, selenium)'
+        required: true
+        default: 'playwright'
+        type: choice
+        options:
+          - playwright
+          - cypress
+          - selenium
       triggered_by:
         description: 'Who triggered this execution'
         required: false
@@ -27,224 +38,22 @@ jobs:
           node-version: '18'
           cache: 'npm'
       
-      - name: Verify Node.js and npm
-        shell: pwsh
-        run: |
-          Write-Host "Node version: $(node --version)"
-          Write-Host "npm version: $(npm --version)"
-          Write-Host "Current directory: $(Get-Location)"
-          Write-Host "Checking for lock files..."
-          $lockFiles = Get-ChildItem -Filter "package-lock.json","yarn.lock","pnpm-lock.yaml" -ErrorAction SilentlyContinue
-          if ($lockFiles) {
-            Write-Host "Found lock files: $($lockFiles.Name -join ', ')"
-          } else {
-            Write-Host "No lock files found"
-          }
-      
       - name: Install dependencies
-        shell: pwsh
-        run: |
-          # Clear npm cache if there are issues
-          Write-Host "Clearing npm cache..."
-          npm cache clean --force
-          
-          # Check if package-lock.json exists, otherwise use npm install
-          if (Test-Path "package-lock.json") {
-            Write-Host "Found package-lock.json, using npm ci with legacy peer deps"
-            try {
-              npm ci --legacy-peer-deps
-            } catch {
-              Write-Host "npm ci failed, trying npm install..."
-              npm install --legacy-peer-deps
-            }
-          } else {
-            Write-Host "No package-lock.json found, using npm install with legacy peer deps"
-            npm install --legacy-peer-deps
-          }
-          
-          Write-Host "Dependencies installed successfully"
-          try {
-            npm list --depth=0
-          } catch {
-            Write-Host "Warning: Some dependencies may have peer dependency issues"
-          }
+        run: npm ci
       
-      - name: Install Playwright
-        shell: pwsh
-        run: |
-          # Install Playwright if not already in package.json
-          $playwrightInstalled = npm list @playwright/test 2>$null
-          if (-not $playwrightInstalled) {
-            Write-Host "Installing Playwright..."
-            npm install --save-dev @playwright/test --legacy-peer-deps
-          } else {
-            Write-Host "Playwright already installed"
-          }
-          # Install TypeScript support for Playwright config (required for .ts config files)
-          $tsInstalled = npm list typescript 2>$null
-          if (-not $tsInstalled) {
-            Write-Host "Installing TypeScript for Playwright config..."
-            npm install --save-dev typescript @types/node --legacy-peer-deps
-          }
-          # Install ts-node or @swc/core for TypeScript config compilation
-          $tsNodeInstalled = npm list ts-node 2>$null
-          $swcInstalled = npm list @swc/core 2>$null
-          if (-not $tsNodeInstalled -and -not $swcInstalled) {
-            Write-Host "Installing ts-node for TypeScript config support..."
-            try {
-              npm install --save-dev ts-node --legacy-peer-deps
-            } catch {
-              try {
-                npm install --save-dev @swc/core @swc/helpers --legacy-peer-deps
-              } catch {
-                Write-Host "Warning: TypeScript runtime install failed, but continuing..."
-              }
-            }
-          }
-          # Install Playwright browsers
-          Write-Host "Installing Playwright browsers..."
-          try {
-            npx playwright install --with-deps
-          } catch {
-            Write-Host "Warning: Browser installation had issues"
-          }
+      - name: Install Playwright browsers
+        if: inputs.framework == 'playwright'
+        run: npx playwright install --with-deps
       
       - name: Parse test IDs
         id: parse_tests
-        shell: pwsh
         run: |
-          Write-Host "Test IDs: ${{ inputs.test_ids }}"
-          # Convert comma-separated IDs to array
-          $testArray = "${{ inputs.test_ids }}".Split(',')
-          $testCount = $testArray.Count
-          "test_count=$testCount" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          echo "Test IDs: ${{ inputs.test_ids }}"
       
       - name: Run Playwright tests
-        shell: pwsh
-        run: |
-          Write-Host "Running Playwright tests: ${{ inputs.test_ids }}"
-          
-          # Check if Playwright is installed
-          $npxCheck = Get-Command npx -ErrorAction SilentlyContinue
-          $playwrightCheck = npx playwright --version 2>$null
-          if (-not $npxCheck -or -not $playwrightCheck) {
-            Write-Host "❌ Playwright is not installed. Installing now..."
-            npm install --save-dev @playwright/test --legacy-peer-deps
-            npx playwright install --with-deps
-          }
-          
-          # Create Playwright config if it doesn't exist (TypeScript format)
-          $configExists = (Test-Path "playwright.config.ts") -or (Test-Path "playwright.config.js") -or (Test-Path "playwright.config.mjs")
-          if (-not $configExists) {
-            Write-Host "Creating basic Playwright config (TypeScript format)..."
-            
-            # Ensure TypeScript and ts-node are installed for TypeScript config support
-            $tsInstalled = npm list typescript 2>$null
-            if (-not $tsInstalled) {
-              Write-Host "Installing TypeScript..."
-              npm install --save-dev typescript @types/node --legacy-peer-deps
-            }
-            
-            $tsNodeInstalled = npm list ts-node 2>$null
-            $swcInstalled = npm list @swc/core 2>$null
-            if (-not $tsNodeInstalled -and -not $swcInstalled) {
-              Write-Host "Installing ts-node for TypeScript config compilation..."
-              try {
-                npm install --save-dev ts-node --legacy-peer-deps
-              } catch {
-                npm install --save-dev @swc/core @swc/helpers --legacy-peer-deps
-              }
-            }
-            
-            $configContent = @"
-          import { defineConfig, devices } from '@playwright/test';
-
-          /**
-           * Read environment variables from file.
-           * https://github.com/motdotla/dotenv
-           */
-          // require('dotenv').config();
-
-          /**
-           * See https://playwright.dev/docs/test-configuration.
-           */
-          export default defineConfig({
-            testDir: './tests',
-            /* Run tests in files in parallel */
-            fullyParallel: true,
-            /* Fail the build on CI if you accidentally left test.only in the source code. */
-            forbidOnly: !!process.env.CI,
-            /* Retry on CI only */
-            retries: process.env.CI ? 2 : 0,
-            /* Opt out of parallel tests on CI. */
-            workers: process.env.CI ? 1 : undefined,
-            /* Reporter to use. See https://playwright.dev/docs/test-reporters */
-            reporter: 'html',
-            /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
-            use: {
-              /* Base URL to use in actions like `await page.goto('/')`. */
-              // baseURL: 'http://127.0.0.1:3000',
-
-              /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
-              trace: 'on-first-retry',
-            },
-
-            /* Configure projects for major browsers */
-            projects: [
-              {
-                name: 'chromium',
-                use: { ...devices['Desktop Chrome'] },
-              },
-
-              // {
-              //   name: 'firefox',
-              //   use: { ...devices['Desktop Firefox'] },
-              // },
-
-              // {
-              //   name: 'webkit',
-              //   use: { ...devices['Desktop Safari'] },
-              // },
-            ],
-          });
-          "@
-            Set-Content -Path "playwright.config.ts" -Value $configContent
-            Write-Host "✅ Created playwright.config.ts (TypeScript format)"
-          }
-          
-          $testIds = "${{ inputs.test_ids }}".Split(',')
-          $exitCode = 0
-          $testsFound = 0
-          
-          foreach ($testId in $testIds) {
-            $testId = $testId.Trim()
-            Write-Host "Executing test: $testId"
-            # Find and run the test file
-            # Assumes test files are named like: tests/XSP-16-TC01.spec.ts
-            $testFile = Get-ChildItem -Path "tests" -Recurse -Filter "*$testId*.spec.ts","*$testId*.spec.js","*$testId*.spec.mjs" -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($testFile) {
-              Write-Host "Found test file: $($testFile.FullName)"
-              $testsFound++
-              # Run Playwright test - Playwright handles ES modules internally for test files
-              try {
-                npx playwright test $testFile.FullName
-                if ($LASTEXITCODE -ne 0) { $exitCode = $LASTEXITCODE }
-              } catch {
-                Write-Host "Test execution failed: $_"
-                $exitCode = 1
-              }
-            } else {
-              Write-Host "⚠️ Test file not found for: $testId"
-              $exitCode = 1
-            }
-          }
-          
-          if ($testsFound -eq 0) {
-            Write-Host "⚠️ No test files found. Make sure your test files are in the 'tests' directory and named like: tests/XSP-16-TC01.spec.ts"
-            exit 1
-          }
-          
-          exit $exitCode
+        if: inputs.framework == 'playwright'
+        run: npx playwright test
+           
       
       - name: Upload test results
         if: always()
@@ -255,14 +64,4 @@ jobs:
             test-results/
             playwright-report/
           retention-days: 30
-          if-no-files-found: ignore
-      
-      - name: Publish test report
-        if: always()
-        shell: pwsh
-        run: |
-          Write-Host "Test execution completed"
-          Write-Host "Framework: Playwright"
-          Write-Host "Test IDs: ${{ inputs.test_ids }}"
-          Write-Host "Triggered by: ${{ inputs.triggered_by }}"
-
+ 
