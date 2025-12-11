@@ -1,5 +1,3 @@
-# 📋 Copy This Workflow to Your GitHub Repo
-
 name: Agentic QE - Test Execution
 
 on:
@@ -38,22 +36,228 @@ jobs:
           node-version: '18'
           cache: 'npm'
       
-      - name: Install dependencies
-        run: npm ci
+      - name: Verify Node.js and npm
+        run: |
+          echo "Node version: $(node --version)"
+          echo "npm version: $(npm --version)"
+          echo "Current directory: $(pwd)"
+          echo "Checking for lock files..."
+          ls -la | grep -E "(package-lock|yarn.lock|pnpm-lock)" || echo "No lock files found"
       
-      - name: Install Playwright browsers
+      - name: Install dependencies
+        run: |
+          # Clear npm cache if there are issues
+          echo "Clearing npm cache..."
+          npm cache clean --force || true
+          
+          # Check if package-lock.json exists, otherwise use npm install
+          if [ -f "package-lock.json" ]; then
+            echo "Found package-lock.json, using npm ci with legacy peer deps"
+            npm ci --legacy-peer-deps || {
+              echo "npm ci failed, trying npm install..."
+              npm install --legacy-peer-deps
+            }
+          else
+            echo "No package-lock.json found, using npm install with legacy peer deps"
+            npm install --legacy-peer-deps
+          fi
+          
+          echo "Dependencies installed successfully"
+          npm list --depth=0 || echo "Warning: Some dependencies may have peer dependency issues"
+      
+      - name: Install Playwright
         if: inputs.framework == 'playwright'
-        run: npx playwright install --with-deps
+        run: |
+          # Install Playwright if not already in package.json
+          if ! npm list @playwright/test >/dev/null 2>&1; then
+            echo "Installing Playwright..."
+            npm install --save-dev @playwright/test --legacy-peer-deps
+          else
+            echo "Playwright already installed"
+          fi
+          # Install TypeScript support for Playwright config (required for .ts config files)
+          if ! npm list typescript >/dev/null 2>&1; then
+            echo "Installing TypeScript for Playwright config..."
+            npm install --save-dev typescript @types/node --legacy-peer-deps
+          fi
+          # Install ts-node or @swc/core for TypeScript config compilation
+          if ! npm list ts-node >/dev/null 2>&1 && ! npm list @swc/core >/dev/null 2>&1; then
+            echo "Installing ts-node for TypeScript config support..."
+            npm install --save-dev ts-node --legacy-peer-deps || npm install --save-dev @swc/core @swc/helpers --legacy-peer-deps || echo "Warning: TypeScript runtime install failed, but continuing..."
+          fi
+          # Install Playwright browsers
+          echo "Installing Playwright browsers..."
+          npx playwright install --with-deps || echo "Warning: Browser installation had issues"
+      
+      - name: Install Cypress
+        if: inputs.framework == 'cypress'
+        run: |
+          # Install Cypress if not already in package.json
+          if ! npm list cypress >/dev/null 2>&1; then
+            echo "Installing Cypress..."
+            npm install --save-dev cypress --legacy-peer-deps
+          else
+            echo "Cypress already installed"
+          fi
       
       - name: Parse test IDs
         id: parse_tests
         run: |
           echo "Test IDs: ${{ inputs.test_ids }}"
+          # Convert comma-separated IDs to array
+          IFS=',' read -ra TEST_ARRAY <<< "${{ inputs.test_ids }}"
+          echo "test_count=${#TEST_ARRAY[@]}" >> $GITHUB_OUTPUT
       
       - name: Run Playwright tests
         if: inputs.framework == 'playwright'
-        run: npx playwright test
-           
+        run: |
+          echo "Running Playwright tests: ${{ inputs.test_ids }}"
+          
+          # Check if Playwright is installed
+          if ! command -v npx &> /dev/null || ! npx playwright --version &> /dev/null; then
+            echo "❌ Playwright is not installed. Installing now..."
+            npm install --save-dev @playwright/test --legacy-peer-deps
+            npx playwright install --with-deps
+          fi
+          
+          # Create Playwright config if it doesn't exist (TypeScript format)
+          if [ ! -f "playwright.config.ts" ] && [ ! -f "playwright.config.js" ] && [ ! -f "playwright.config.mjs" ]; then
+            echo "Creating basic Playwright config (TypeScript format)..."
+            
+            # Ensure TypeScript and ts-node are installed for TypeScript config support
+            if ! npm list typescript >/dev/null 2>&1; then
+              echo "Installing TypeScript..."
+              npm install --save-dev typescript @types/node --legacy-peer-deps
+            fi
+            
+            if ! npm list @swc/core >/dev/null 2>&1 && ! npm list ts-node >/dev/null 2>&1; then
+              echo "Installing ts-node for TypeScript config compilation..."
+              npm install --save-dev ts-node --legacy-peer-deps || npm install --save-dev @swc/core @swc/helpers --legacy-peer-deps
+            fi
+            
+            cat > playwright.config.ts << 'EOF'
+          import { defineConfig, devices } from '@playwright/test';
+
+          /**
+           * Read environment variables from file.
+           * https://github.com/motdotla/dotenv
+           */
+          // require('dotenv').config();
+
+          /**
+           * See https://playwright.dev/docs/test-configuration.
+           */
+          export default defineConfig({
+            testDir: './tests',
+            /* Run tests in files in parallel */
+            fullyParallel: true,
+            /* Fail the build on CI if you accidentally left test.only in the source code. */
+            forbidOnly: !!process.env.CI,
+            /* Retry on CI only */
+            retries: process.env.CI ? 2 : 0,
+            /* Opt out of parallel tests on CI. */
+            workers: process.env.CI ? 1 : undefined,
+            /* Reporter to use. See https://playwright.dev/docs/test-reporters */
+            reporter: 'html',
+            /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
+            use: {
+              /* Base URL to use in actions like `await page.goto('/')`. */
+              // baseURL: 'http://127.0.0.1:3000',
+
+              /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
+              trace: 'on-first-retry',
+            },
+
+            /* Configure projects for major browsers */
+            projects: [
+              {
+                name: 'chromium',
+                use: { ...devices['Desktop Chrome'] },
+              },
+
+              // {
+              //   name: 'firefox',
+              //   use: { ...devices['Desktop Firefox'] },
+              // },
+
+              // {
+              //   name: 'webkit',
+              //   use: { ...devices['Desktop Safari'] },
+              // },
+            ],
+          });
+          EOF
+            echo "✅ Created playwright.config.ts (TypeScript format)"
+          fi
+          
+          IFS=',' read -ra TEST_IDS <<< "${{ inputs.test_ids }}"
+          EXIT_CODE=0
+          TESTS_FOUND=0
+          
+          for test_id in "${TEST_IDS[@]}"; do
+            echo "Executing test: $test_id"
+            # Find and run the test file
+            # Assumes test files are named like: tests/XSP-16-TC01.spec.ts
+            TEST_FILE=$(find tests -name "*${test_id}*.spec.ts" -o -name "*${test_id}*.spec.js" -o -name "*${test_id}*.spec.mjs" 2>/dev/null | head -1)
+            if [ -n "$TEST_FILE" ]; then
+              echo "Found test file: $TEST_FILE"
+              TESTS_FOUND=$((TESTS_FOUND + 1))
+              # Run Playwright test - Playwright handles ES modules internally for test files
+              npx playwright test "$TEST_FILE" || EXIT_CODE=$?
+            else
+              echo "⚠️ Test file not found for: $test_id"
+              EXIT_CODE=1
+            fi
+          done
+          
+          if [ $TESTS_FOUND -eq 0 ]; then
+            echo "⚠️ No test files found. Make sure your test files are in the 'tests' directory and named like: tests/XSP-16-TC01.spec.ts"
+            exit 1
+          fi
+          
+          exit $EXIT_CODE
+      
+      - name: Run Cypress tests
+        if: inputs.framework == 'cypress'
+        run: |
+          echo "Running Cypress tests: ${{ inputs.test_ids }}"
+          IFS=',' read -ra TEST_IDS <<< "${{ inputs.test_ids }}"
+          EXIT_CODE=0
+          for test_id in "${TEST_IDS[@]}"; do
+            echo "Executing test: $test_id"
+            TEST_FILE=$(find cypress/e2e -name "*${test_id}*.cy.ts" -o -name "*${test_id}*.cy.js" 2>/dev/null | head -1)
+            if [ -n "$TEST_FILE" ]; then
+              echo "Found test file: $TEST_FILE"
+              npx cypress run --spec "$TEST_FILE" || EXIT_CODE=$?
+            else
+              echo "⚠️ Test file not found for: $test_id"
+              EXIT_CODE=1
+            fi
+          done
+          exit $EXIT_CODE
+      
+      - name: Run Selenium tests
+        if: inputs.framework == 'selenium'
+        run: |
+          echo "Running Selenium tests: ${{ inputs.test_ids }}"
+          IFS=',' read -ra TEST_IDS <<< "${{ inputs.test_ids }}"
+          EXIT_CODE=0
+          for test_id in "${TEST_IDS[@]}"; do
+            echo "Executing test: $test_id"
+            # Find and run the test file
+            TEST_FILE=$(find tests -name "*${test_id}*.py" -o -name "*${test_id}*.js" -o -name "*${test_id}*.java" 2>/dev/null | head -1)
+            if [ -n "$TEST_FILE" ]; then
+              echo "Found test file: $TEST_FILE"
+              # Add your Selenium test execution command here
+              # Example: python -m pytest "$TEST_FILE" || EXIT_CODE=$?
+              echo "⚠️ Selenium execution not configured for: $TEST_FILE"
+              EXIT_CODE=1
+            else
+              echo "⚠️ Test file not found for: $test_id"
+              EXIT_CODE=1
+            fi
+          done
+          exit $EXIT_CODE
       
       - name: Upload test results
         if: always()
@@ -63,5 +267,16 @@ jobs:
           path: |
             test-results/
             playwright-report/
+            cypress/videos/
+            cypress/screenshots/
           retention-days: 30
- 
+          if-no-files-found: ignore
+      
+      - name: Publish test report
+        if: always()
+        run: |
+          echo "Test execution completed"
+          echo "Framework: ${{ inputs.framework }}"
+          echo "Test IDs: ${{ inputs.test_ids }}"
+          echo "Triggered by: ${{ inputs.triggered_by }}"
+
