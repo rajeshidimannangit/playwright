@@ -7,15 +7,6 @@ on:
         description: 'Comma-separated test case IDs'
         required: true
         type: string
-      framework:
-        description: 'Test framework (playwright, cypress, selenium)'
-        required: true
-        default: 'playwright'
-        type: choice
-        options:
-          - playwright
-          - cypress
-          - selenium
       triggered_by:
         description: 'Who triggered this execution'
         required: false
@@ -37,6 +28,7 @@ jobs:
           cache: 'npm'
       
       - name: Verify Node.js and npm
+        shell: bash
         run: |
           echo "Node version: $(node --version)"
           echo "npm version: $(npm --version)"
@@ -45,6 +37,7 @@ jobs:
           ls -la | grep -E "(package-lock|yarn.lock|pnpm-lock)" || echo "No lock files found"
       
       - name: Install dependencies
+        shell: bash
         run: |
           # Clear npm cache if there are issues
           echo "Clearing npm cache..."
@@ -66,7 +59,7 @@ jobs:
           npm list --depth=0 || echo "Warning: Some dependencies may have peer dependency issues"
       
       - name: Install Playwright
-        if: inputs.framework == 'playwright'
+        shell: bash
         run: |
           # Install Playwright if not already in package.json
           if ! npm list @playwright/test >/dev/null 2>&1; then
@@ -89,19 +82,9 @@ jobs:
           echo "Installing Playwright browsers..."
           npx playwright install --with-deps || echo "Warning: Browser installation had issues"
       
-      - name: Install Cypress
-        if: inputs.framework == 'cypress'
-        run: |
-          # Install Cypress if not already in package.json
-          if ! npm list cypress >/dev/null 2>&1; then
-            echo "Installing Cypress..."
-            npm install --save-dev cypress --legacy-peer-deps
-          else
-            echo "Cypress already installed"
-          fi
-      
       - name: Parse test IDs
         id: parse_tests
+        shell: bash
         run: |
           echo "Test IDs: ${{ inputs.test_ids }}"
           # Convert comma-separated IDs to array
@@ -109,7 +92,7 @@ jobs:
           echo "test_count=${#TEST_ARRAY[@]}" >> $GITHUB_OUTPUT
       
       - name: Run Playwright tests
-        if: inputs.framework == 'playwright'
+        shell: bash
         run: |
           echo "Running Playwright tests: ${{ inputs.test_ids }}"
           
@@ -217,48 +200,6 @@ jobs:
           
           exit $EXIT_CODE
       
-      - name: Run Cypress tests
-        if: inputs.framework == 'cypress'
-        run: |
-          echo "Running Cypress tests: ${{ inputs.test_ids }}"
-          IFS=',' read -ra TEST_IDS <<< "${{ inputs.test_ids }}"
-          EXIT_CODE=0
-          for test_id in "${TEST_IDS[@]}"; do
-            echo "Executing test: $test_id"
-            TEST_FILE=$(find cypress/e2e -name "*${test_id}*.cy.ts" -o -name "*${test_id}*.cy.js" 2>/dev/null | head -1)
-            if [ -n "$TEST_FILE" ]; then
-              echo "Found test file: $TEST_FILE"
-              npx cypress run --spec "$TEST_FILE" || EXIT_CODE=$?
-            else
-              echo "⚠️ Test file not found for: $test_id"
-              EXIT_CODE=1
-            fi
-          done
-          exit $EXIT_CODE
-      
-      - name: Run Selenium tests
-        if: inputs.framework == 'selenium'
-        run: |
-          echo "Running Selenium tests: ${{ inputs.test_ids }}"
-          IFS=',' read -ra TEST_IDS <<< "${{ inputs.test_ids }}"
-          EXIT_CODE=0
-          for test_id in "${TEST_IDS[@]}"; do
-            echo "Executing test: $test_id"
-            # Find and run the test file
-            TEST_FILE=$(find tests -name "*${test_id}*.py" -o -name "*${test_id}*.js" -o -name "*${test_id}*.java" 2>/dev/null | head -1)
-            if [ -n "$TEST_FILE" ]; then
-              echo "Found test file: $TEST_FILE"
-              # Add your Selenium test execution command here
-              # Example: python -m pytest "$TEST_FILE" || EXIT_CODE=$?
-              echo "⚠️ Selenium execution not configured for: $TEST_FILE"
-              EXIT_CODE=1
-            else
-              echo "⚠️ Test file not found for: $test_id"
-              EXIT_CODE=1
-            fi
-          done
-          exit $EXIT_CODE
-      
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
@@ -267,16 +208,15 @@ jobs:
           path: |
             test-results/
             playwright-report/
-            cypress/videos/
-            cypress/screenshots/
           retention-days: 30
           if-no-files-found: ignore
       
       - name: Publish test report
         if: always()
+        shell: bash
         run: |
           echo "Test execution completed"
-          echo "Framework: ${{ inputs.framework }}"
+          echo "Framework: Playwright"
           echo "Test IDs: ${{ inputs.test_ids }}"
           echo "Triggered by: ${{ inputs.triggered_by }}"
 
