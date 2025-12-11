@@ -39,7 +39,7 @@ jobs:
           cache: 'npm'
 
       - name: Get Current Directory
-        run: cd
+        run: pwd
         
       - name: Get NPM Config
         run: npm config list
