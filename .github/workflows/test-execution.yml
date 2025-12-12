@@ -195,13 +195,13 @@ jobs:
                 if ($fileDir -like "*\src\tests*" -or $fileDir -like "*/src/tests*") {
                   # Use just the filename since testDir is already set to src/tests
                   Write-Host "File is in src/tests, using filename: $fileName"
-                  npx playwright test "$fileName"
+                  npx playwright test "$fileName" --headed
                 } else {
                   # Use relative path from repo root
                   $repoRoot = (Get-Location).Path
                   $relativePath = $testFile.FullName.Replace($repoRoot, "").TrimStart("\", "/").Replace("\", "/")
                   Write-Host "Using relative path: $relativePath"
-                  npx playwright test "$relativePath"
+                  npx playwright test "$relativePath" --headed
                 }
                 
                 $testExitCode = $LASTEXITCODE
