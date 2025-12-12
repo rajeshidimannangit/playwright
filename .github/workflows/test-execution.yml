@@ -131,12 +131,29 @@ jobs:
         shell: powershell
         run: |
           Write-Host "Running Playwright tests: ${{ inputs.test_ids }}"
+          Write-Host "Current directory: $(Get-Location)"
           
           # Check if tests directory exists
           if (-not (Test-Path "tests")) {
             Write-Host "⚠️ Tests directory not found. Creating it..."
             New-Item -ItemType Directory -Path "tests" -Force | Out-Null
           }
+          
+          # List all files in tests directory for debugging
+          Write-Host "`n📁 Files in tests directory:"
+          if (Test-Path "tests") {
+            $allFiles = Get-ChildItem -Path "tests" -Recurse -File | Select-Object FullName
+            if ($allFiles) {
+              foreach ($file in $allFiles) {
+                Write-Host "   - $($file.FullName)"
+              }
+            } else {
+              Write-Host "   (no files found)"
+            }
+          } else {
+            Write-Host "   (directory doesn't exist)"
+          }
+          Write-Host ""
           
           $testIds = "${{ inputs.test_ids }}".Split(',')
           $exitCode = 0
@@ -150,6 +167,9 @@ jobs:
             # Search for each pattern separately since -Include can be finicky
             $testFile = $null
             $patterns = @("*$testId*.spec.ts", "*$testId*.spec.js", "*$testId*.spec.mjs")
+            
+            # Also try without .spec extension
+            $patterns += @("*$testId*.ts", "*$testId*.js")
             
             foreach ($pattern in $patterns) {
               if (-not $testFile) {
@@ -182,6 +202,10 @@ jobs:
           
           if ($testsFound -eq 0) {
             Write-Host "⚠️ No test files found. Make sure your test files are in the 'tests' directory and named like: tests/XSP-16-TC01.spec.ts"
+            Write-Host "`n💡 Tips:"
+            Write-Host "   - Test files should be in the 'tests' directory"
+            Write-Host "   - File names should contain the test ID (e.g., XSP-16-TC01)"
+            Write-Host "   - Supported extensions: .spec.ts, .spec.js, .spec.mjs, .ts, .js"
             exit 1
           }
           
