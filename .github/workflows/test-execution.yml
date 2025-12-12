@@ -69,11 +69,19 @@ jobs:
           Write-Host "Installing Playwright browsers..."
           npx playwright install --with-deps
       
-      - name: Create Playwright config if missing
+      - name: Create or update Playwright config for headed mode
         shell: powershell
         run: |
-          $configExists = (Test-Path "playwright.config.ts") -or (Test-Path "playwright.config.js") -or (Test-Path "playwright.config.mjs")
-          if (-not $configExists) {
+          $configFile = $null
+          if (Test-Path "playwright.config.ts") {
+            $configFile = "playwright.config.ts"
+          } elseif (Test-Path "playwright.config.js") {
+            $configFile = "playwright.config.js"
+          } elseif (Test-Path "playwright.config.mjs") {
+            $configFile = "playwright.config.mjs"
+          }
+          
+          if (-not $configFile) {
             Write-Host "Creating basic Playwright config (TypeScript format)..."
             $configContent = @"
           import { defineConfig, devices } from '@playwright/test';
@@ -127,18 +135,180 @@ jobs:
           });
           "@
             Set-Content -Path "playwright.config.ts" -Value $configContent
-            Write-Host "Created playwright.config.ts"
+            Write-Host "Created playwright.config.ts with headless: false"
           } else {
-            Write-Host "Playwright config already exists"
+            Write-Host "Found existing config: $configFile"
+            $configContent = Get-Content $configFile -Raw
+            
+            # Check if headless is set to false
+            $needsUpdate = $false
+            $updatedContent = $configContent
+            
+            # Replace headless: true with headless: false
+            if ($configContent -match "headless[:\s]*true") {
+              Write-Host "Updating headless: true to headless: false..."
+              $updatedContent = $updatedContent -replace "headless[:\s]*true", "headless: false"
+              $needsUpdate = $true
+            }
+            
+            # Ensure headless: false is in the use section
+            if ($updatedContent -notmatch "use:\s*\{[^}]*headless[:\s]*false") {
+              Write-Host "Ensuring headless: false is in use section..."
+              # Try to add it after trace or baseURL comment
+              if ($updatedContent -match "(use:\s*\{[^}]*)(trace[^,}]+)") {
+                $updatedContent = $updatedContent -replace "(use:\s*\{[^}]*)(trace[^,}]+)", "`$1`$2,`n              headless: false"
+                $needsUpdate = $true
+              } elseif ($updatedContent -match "(use:\s*\{)") {
+                $updatedContent = $updatedContent -replace "(use:\s*\{)", "`$1`n              headless: false,"
+                $needsUpdate = $true
+              }
+            }
+            
+            # Ensure headless: false is in chromium project
+            if ($updatedContent -match "name:\s*['\`"]chromium['\`"]") {
+              if ($updatedContent -notmatch "name:\s*['\`"]chromium['\`"][^}]*headless[:\s]*false") {
+                Write-Host "Ensuring headless: false is in chromium project..."
+                if ($updatedContent -match "(name:\s*['\`"]chromium['\`"][^}]*use:\s*\{[^}]*)(\.\.\.devices)") {
+                  $updatedContent = $updatedContent -replace "(name:\s*['\`"]chromium['\`"][^}]*use:\s*\{[^}]*)(\.\.\.devices)", "`$1`$2,`n                  headless: false"
+                  $needsUpdate = $true
+                }
+              }
+            }
+            
+            if ($needsUpdate) {
+              Set-Content -Path $configFile -Value $updatedContent
+              Write-Host "Updated $configFile to ensure headless: false"
+            } else {
+              Write-Host "Config already has headless: false configured"
+            }
           }
+      
+      - name: Verify GUI access for headed mode
+        shell: powershell
+        run: |
+          Write-Host "=========================================="
+          Write-Host "Checking GUI access for browser execution"
+          Write-Host "=========================================="
+          Write-Host ""
+          
+          # Check if explorer process exists (indicates GUI session)
+          $explorer = Get-Process -Name "explorer" -ErrorAction SilentlyContinue
+          if ($explorer) {
+            Write-Host "[OK] GUI session detected - browser should be able to open"
+            Write-Host "     Explorer process found: $($explorer.Count) instance(s)"
+          } else {
+            Write-Host "[WARNING] No GUI session detected"
+            Write-Host "          Browser may not open even with headless: false"
+            Write-Host "          Configure the runner service to run under your user account"
+          }
+          Write-Host ""
+          
+          # Check current user context
+          $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+          Write-Host "Current user context: $currentUser"
+          
+          # Check if running in service context
+          $isService = [System.Environment]::UserName -eq "SYSTEM" -or $env:USERNAME -eq "SYSTEM"
+          if ($isService) {
+            Write-Host "[WARNING] Running as SYSTEM - may not have GUI access"
+            Write-Host "          To fix: Configure the GitHub Actions runner service"
+            Write-Host "          to run under your user account in services.msc"
+          } else {
+            Write-Host "[OK] Running as user account - should have GUI access"
+          }
+          Write-Host ""
+          
+          # Check GitHub Actions runner service configuration
+          $service = Get-Service | Where-Object {$_.DisplayName -like "*GitHub*Actions*" -or $_.Name -like "*actions*runner*"}
+          if ($service) {
+            Write-Host "GitHub Actions Runner Service Status:"
+            Write-Host "  Service Name: $($service.DisplayName)"
+            Write-Host "  Status: $($service.Status)"
+            
+            try {
+              $serviceObj = Get-WmiObject Win32_Service -Filter "Name='$($service.Name)'" -ErrorAction SilentlyContinue
+              if ($serviceObj) {
+                Write-Host "  Service Account: $($serviceObj.StartName)"
+                if ($serviceObj.StartName -eq "LocalSystem" -or $serviceObj.StartName -like "*SYSTEM*") {
+                  Write-Host "  [WARNING] Service is running as SYSTEM/LocalSystem"
+                  Write-Host "            This may prevent GUI access"
+                  Write-Host "            Recommendation: Configure service to run under your user account"
+                } else {
+                  Write-Host "  [OK] Service is running under user account: $($serviceObj.StartName)"
+                }
+              }
+            } catch {
+              Write-Host "  (Could not retrieve service details)"
+            }
+          } else {
+            Write-Host "[INFO] No GitHub Actions service found"
+            Write-Host "       Runner may be running as a user process (which is good for GUI access)"
+          }
+          Write-Host ""
+          
+          # Check for active desktop session
+          try {
+            $desktopSession = Get-Process -Name "explorer" -ErrorAction SilentlyContinue
+            if ($desktopSession) {
+              Write-Host "[OK] Active desktop session detected"
+            } else {
+              Write-Host "[WARNING] No active desktop session found"
+              Write-Host "          Ensure the Windows user is logged in and the screen is not locked"
+            }
+          } catch {
+            Write-Host "[INFO] Could not verify desktop session"
+          }
+          Write-Host ""
+          
+          # Display environment variables related to GUI
+          Write-Host "Environment variables:"
+          Write-Host "  USERNAME: $env:USERNAME"
+          Write-Host "  USERPROFILE: $env:USERPROFILE"
+          Write-Host "  SESSIONNAME: $env:SESSIONNAME"
+          Write-Host ""
+          
+          Write-Host "=========================================="
+          Write-Host "GUI Access Check Complete"
+          Write-Host "=========================================="
+          Write-Host ""
+          Write-Host "If browser does not open, ensure:"
+          Write-Host "  1. The runner service runs under your user account (not SYSTEM)"
+          Write-Host "  2. Your Windows user session is active and logged in"
+          Write-Host "  3. The screen is not locked"
+          Write-Host ""
       
       - name: Run Playwright tests
         shell: powershell
         env:
           PLAYWRIGHT_HEADED: "1"
         run: |
+          Write-Host "=========================================="
           Write-Host "Running Playwright tests: ${{ inputs.test_ids }}"
+          Write-Host "=========================================="
           Write-Host "Current directory: $(Get-Location)"
+          Write-Host "Environment variable PLAYWRIGHT_HEADED: $env:PLAYWRIGHT_HEADED"
+          Write-Host ""
+          
+          # Verify Playwright config settings
+          if (Test-Path "playwright.config.ts") {
+            Write-Host "Playwright config verification:"
+            $config = Get-Content "playwright.config.ts" -Raw
+            if ($config -match "headless[:\s]*false") {
+              Write-Host "  [OK] headless: false found in config"
+            } else {
+              Write-Host "  [WARNING] headless: false NOT found in config"
+            }
+            if ($config -match "headless[:\s]*true") {
+              Write-Host "  [WARNING] headless: true found in config (will override false)"
+            }
+          } elseif (Test-Path "playwright.config.js") {
+            Write-Host "Playwright config (JS) found"
+          } elseif (Test-Path "playwright.config.mjs") {
+            Write-Host "Playwright config (MJS) found"
+          } else {
+            Write-Host "[WARNING] No Playwright config file found"
+          }
+          Write-Host ""
           
           # Check if tests directory exists
           if (-not (Test-Path "src/tests")) {
