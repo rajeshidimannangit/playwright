@@ -28,7 +28,7 @@ jobs:
           cache: 'npm'
       
       - name: Install dependencies
-        shell: pwsh
+        shell: powershell
         run: |
           Write-Host "Checking for package-lock.json..."
           if (Test-Path "package-lock.json") {
@@ -40,7 +40,7 @@ jobs:
           }
       
       - name: Install Playwright
-        shell: pwsh
+        shell: powershell
         run: |
           $playwrightInstalled = npm list @playwright/test 2>$null
           if (-not $playwrightInstalled) {
@@ -70,7 +70,7 @@ jobs:
           npx playwright install --with-deps
       
       - name: Create Playwright config if missing
-        shell: pwsh
+        shell: powershell
         run: |
           $configExists = (Test-Path "playwright.config.ts") -or (Test-Path "playwright.config.js") -or (Test-Path "playwright.config.mjs")
           if (-not $configExists) {
@@ -181,7 +181,7 @@ jobs:
       
       - name: Publish test report
         if: always()
-        shell: pwsh
+        shell: powershell
         run: |
           Write-Host "Test execution completed"
           Write-Host "Framework: Playwright"
