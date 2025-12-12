@@ -135,12 +135,13 @@ jobs:
           
           # Check if tests directory exists
           if (-not (Test-Path "tests")) {
-            Write-Host "⚠️ Tests directory not found. Creating it..."
+            Write-Host "Tests directory not found. Creating it..."
             New-Item -ItemType Directory -Path "tests" -Force | Out-Null
           }
           
           # List all files in tests directory for debugging
-          Write-Host "`n📁 Files in tests directory:"
+          Write-Host ""
+          Write-Host "Files in tests directory:"
           if (Test-Path "tests") {
             $allFiles = Get-ChildItem -Path "tests" -Recurse -File | Select-Object FullName
             if ($allFiles) {
@@ -194,15 +195,16 @@ jobs:
                 $exitCode = 1
               }
             } else {
-              Write-Host "⚠️ Test file not found for: $testId"
+              Write-Host "Test file not found for: $testId"
               Write-Host "   Searched for patterns: $($patterns -join ', ')"
               $exitCode = 1
             }
           }
           
           if ($testsFound -eq 0) {
-            Write-Host "⚠️ No test files found. Make sure your test files are in the 'tests' directory and named like: tests/XSP-16-TC01.spec.ts"
-            Write-Host "`n💡 Tips:"
+            Write-Host "No test files found. Make sure your test files are in the 'tests' directory and named like: tests/XSP-16-TC01.spec.ts"
+            Write-Host ""
+            Write-Host "Tips:"
             Write-Host "   - Test files should be in the 'tests' directory"
             Write-Host "   - File names should contain the test ID (e.g., XSP-16-TC01)"
             Write-Host "   - Supported extensions: .spec.ts, .spec.js, .spec.mjs, .ts, .js"
