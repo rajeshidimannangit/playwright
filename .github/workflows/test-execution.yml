@@ -132,6 +132,12 @@ jobs:
         run: |
           Write-Host "Running Playwright tests: ${{ inputs.test_ids }}"
           
+          # Check if tests directory exists
+          if (-not (Test-Path "tests")) {
+            Write-Host "⚠️ Tests directory not found. Creating it..."
+            New-Item -ItemType Directory -Path "tests" -Force | Out-Null
+          }
+          
           $testIds = "${{ inputs.test_ids }}".Split(',')
           $exitCode = 0
           $testsFound = 0
@@ -141,7 +147,19 @@ jobs:
             Write-Host "Executing test: $testId"
             
             # Find test file matching the test ID
-            $testFile = Get-ChildItem -Path "tests" -Recurse -Filter "*$testId*.spec.ts","*$testId*.spec.js","*$testId*.spec.mjs" -ErrorAction SilentlyContinue | Select-Object -First 1
+            # Search for each pattern separately since -Include can be finicky
+            $testFile = $null
+            $patterns = @("*$testId*.spec.ts", "*$testId*.spec.js", "*$testId*.spec.mjs")
+            
+            foreach ($pattern in $patterns) {
+              if (-not $testFile) {
+                $found = Get-ChildItem -Path "tests" -Recurse -Filter $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($found) {
+                  $testFile = $found
+                  break
+                }
+              }
+            }
             
             if ($testFile) {
               Write-Host "Found test file: $($testFile.FullName)"
@@ -157,6 +175,7 @@ jobs:
               }
             } else {
               Write-Host "⚠️ Test file not found for: $testId"
+              Write-Host "   Searched for patterns: $($patterns -join ', ')"
               $exitCode = 1
             }
           }
