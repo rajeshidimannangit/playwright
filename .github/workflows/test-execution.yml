@@ -128,7 +128,7 @@ jobs:
           }
       
       - name: Run Playwright tests
-        shell: pwsh
+        shell: powershell
         run: |
           Write-Host "Running Playwright tests: ${{ inputs.test_ids }}"
           
