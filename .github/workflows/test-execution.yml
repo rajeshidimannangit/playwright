@@ -100,13 +100,18 @@ jobs:
 
               /* Collect trace when retrying the failed test. See https://playwright.dev/docs/trace-viewer */
               trace: 'on-first-retry',
+              /* Run in headed mode (show browser) */
+              headless: false,
             },
 
             /* Configure projects for major browsers */
             projects: [
               {
                 name: 'chromium',
-                use: { ...devices['Desktop Chrome'] },
+                use: { 
+                  ...devices['Desktop Chrome'],
+                  headless: false,
+                },
               },
 
               // {
@@ -129,6 +134,8 @@ jobs:
       
       - name: Run Playwright tests
         shell: powershell
+        env:
+          PLAYWRIGHT_HEADED: "1"
         run: |
           Write-Host "Running Playwright tests: ${{ inputs.test_ids }}"
           Write-Host "Current directory: $(Get-Location)"
