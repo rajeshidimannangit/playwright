@@ -82,7 +82,7 @@ jobs:
            * See https://playwright.dev/docs/test-configuration.
            */
           export default defineConfig({
-            testDir: './tests',
+            testDir: './src/tests',
             /* Run tests in files in parallel */
             fullyParallel: true,
             /* Fail the build on CI if you accidentally left test.only in the source code. */
@@ -122,9 +122,9 @@ jobs:
           });
           "@
             Set-Content -Path "playwright.config.ts" -Value $configContent
-            Write-Host "✅ Created playwright.config.ts"
+            Write-Host "Created playwright.config.ts"
           } else {
-            Write-Host "✅ Playwright config already exists"
+            Write-Host "Playwright config already exists"
           }
       
       - name: Run Playwright tests
@@ -134,16 +134,16 @@ jobs:
           Write-Host "Current directory: $(Get-Location)"
           
           # Check if tests directory exists
-          if (-not (Test-Path "tests")) {
+          if (-not (Test-Path "src/tests")) {
             Write-Host "Tests directory not found. Creating it..."
-            New-Item -ItemType Directory -Path "tests" -Force | Out-Null
+            New-Item -ItemType Directory -Path "src/tests" -Force | Out-Null
           }
           
           # List all files in tests directory for debugging
           Write-Host ""
           Write-Host "Files in tests directory:"
-          if (Test-Path "tests") {
-            $allFiles = Get-ChildItem -Path "tests" -Recurse -File | Select-Object FullName
+          if (Test-Path "src/tests") {
+            $allFiles = Get-ChildItem -Path "src/tests" -Recurse -File | Select-Object FullName
             if ($allFiles) {
               foreach ($file in $allFiles) {
                 Write-Host "   - $($file.FullName)"
@@ -174,7 +174,7 @@ jobs:
             
             foreach ($pattern in $patterns) {
               if (-not $testFile) {
-                $found = Get-ChildItem -Path "tests" -Recurse -Filter $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
+                $found = Get-ChildItem -Path "src/tests" -Recurse -Filter $pattern -ErrorAction SilentlyContinue | Select-Object -First 1
                 if ($found) {
                   $testFile = $found
                   break
@@ -202,10 +202,10 @@ jobs:
           }
           
           if ($testsFound -eq 0) {
-            Write-Host "No test files found. Make sure your test files are in the 'tests' directory and named like: tests/XSP-16-TC01.spec.ts"
+            Write-Host "No test files found. Make sure your test files are in the 'src/tests' directory and named like: src/tests/XSP-16-TC01.spec.ts"
             Write-Host ""
             Write-Host "Tips:"
-            Write-Host "   - Test files should be in the 'tests' directory"
+            Write-Host "   - Test files should be in the 'src/tests' directory"
             Write-Host "   - File names should contain the test ID (e.g., XSP-16-TC01)"
             Write-Host "   - Supported extensions: .spec.ts, .spec.js, .spec.mjs, .ts, .js"
             exit 1
